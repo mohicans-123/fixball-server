@@ -4,7 +4,9 @@
 
 const { WebSocketServer } = require('ws');
 
-const PORT = 3000;
+// Render gibi cloud servisleri PORT'u env variable olarak verir.
+// Yerelde calistirirken 3000 fallback.
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 const wss = new WebSocketServer({ port: PORT });
 
