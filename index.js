@@ -2,17 +2,38 @@
 // Calistirma: node index.js
 // Durdurma: Ctrl+C
 
+const http = require('http');
 const { WebSocketServer } = require('ws');
 
 // Render gibi cloud servisleri PORT'u env variable olarak verir.
 // Yerelde calistirirken 3000 fallback.
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-const wss = new WebSocketServer({ port: PORT });
+// HTTP server - UptimeRobot ve health-check icin
+const httpServer = http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'fixball-server',
+      uptime: process.uptime(),
+      rooms: rooms.size,
+    }));
+  } else {
+    res.writeHead(404);
+    res.end('Not Found');
+  }
+});
 
-console.log(`Fixball sunucusu basladi: port ${PORT}`);
-console.log(`Baglanti icin: ws://<bilgisayar-ip>:${PORT}`);
-console.log(`Durdurmak icin: Ctrl+C\n`);
+// WebSocket server, HTTP server'in uzerine bagli (ayni port)
+const wss = new WebSocketServer({ server: httpServer });
+
+httpServer.listen(PORT, () => {
+  console.log(`Fixball sunucusu basladi: port ${PORT}`);
+  console.log(`HTTP: http://localhost:${PORT}/health`);
+  console.log(`WebSocket: ws://localhost:${PORT}`);
+  console.log(`Durdurmak icin: Ctrl+C\n`);
+});
 
 // === Veri yapilari ===
 
