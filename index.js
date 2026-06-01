@@ -101,6 +101,16 @@ wss.on('connection', (ws, req) => {
   const clientIP = req.socket.remoteAddress;
   console.log(`[+] Baglanti: ${clientId} (${clientIP})`);
 
+  // Nagle algoritmasini kapat - kucuk paketleri biriktirme, anlik yolla
+  // Gercek-zamanli oyun icin kritik
+  try {
+    if (req.socket && req.socket.setNoDelay) {
+      req.socket.setNoDelay(true);
+    }
+  } catch (e) {
+    console.log('[!] setNoDelay hatasi:', e.message);
+  }
+
   send(ws, {
     type: 'hello',
     clientId,
