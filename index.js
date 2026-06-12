@@ -84,6 +84,8 @@ function newGame() {
     ballHitPost: false,
     kickedP1: false,
     kickedP2: false,
+    pressedP1: false, // butona basti (topa degse de degmese de) -> halka
+    pressedP2: false,
     loop: null,
   };
 }
@@ -135,18 +137,25 @@ function broadcast(room) {
     ballHitPost: g.ballHitPost,
     kickedP1: g.kickedP1,
     kickedP2: g.kickedP2,
+    pressedP1: g.pressedP1,
+    pressedP2: g.pressedP2,
   };
   send(room.host, msg);
   send(room.guest, msg);
   g.ballHitPost = false; // transient
   g.kickedP1 = false;
   g.kickedP2 = false;
+  g.pressedP1 = false;
+  g.pressedP2 = false;
 }
 
 function tick(room) {
   const g = room.game;
 
   if (g.phase === 'playing') {
+    // Butona basis (topa degse de degmese de) -> halka icin, kick tuketilmeden once
+    g.pressedP1 = g.inputs.p1.kick;
+    g.pressedP2 = g.inputs.p2.kick;
     const ev = physics.simulate(
       { p1: g.p1, p2: g.p2, ball: g.ball },
       g.inputs.p1, g.inputs.p2, g.field
@@ -155,7 +164,7 @@ function tick(room) {
     g.inputs.p1.kick = false;
     g.inputs.p2.kick = false;
     g.ballHitPost = ev.ballHitPost;
-    g.kickedP1 = ev.p1Kicked;
+    g.kickedP1 = ev.p1Kicked; // topa degdi -> ses
     g.kickedP2 = ev.p2Kicked;
 
     if (ev.scored) {
