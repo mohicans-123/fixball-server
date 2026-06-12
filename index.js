@@ -79,6 +79,8 @@ function newGame() {
     timeAccum: 0,
     winner: null, // 'p1' | 'p2' | 'draw'
     ready: { p1: false, p2: false },
+    countdown: 0,        // lobi sonrasi 3-2-1 geri sayim (0 = yok)
+    countdownAccum: 0,   // geri sayim ms biriktirici
     ballHitPost: false,
     kickedP1: false,
     kickedP2: false,
@@ -98,10 +100,20 @@ function startMatch(g) {
   g.winner = null;
   g.pausedBy = null;
   g.ready = { p1: false, p2: false };
+  g.countdown = 0;
+  g.countdownAccum = 0;
   g.timeAccum = 0;
   g.timeLeft = g.matchType === 'time' ? g.timeLimit : 0;
   resetPositions(g);
   g.phase = 'playing';
+}
+
+// Ikisi de Hazir olunca: 3-2-1 geri sayim baslat (tick isler, bitince startMatch)
+function startCountdown(g) {
+  g.phase = 'countdown';
+  g.countdown = 3;
+  g.countdownAccum = 0;
+  resetPositions(g); // saha kickoff pozisyonunda gorunsun
 }
 
 function broadcast(room) {
@@ -115,7 +127,10 @@ function broadcast(room) {
     pausedBy: g.pausedBy,
     winner: g.winner,
     matchType: g.matchType,
+    goalLimit: g.goalLimit,
+    timeLimit: g.timeLimit,
     timeLeft: g.timeLeft,
+    countdown: g.countdown,
     ready: g.ready,
     ballHitPost: g.ballHitPost,
     kickedP1: g.kickedP1,
@@ -166,6 +181,14 @@ function tick(room) {
         else if (g.score.p2 > g.score.p1) g.winner = 'p2';
         else g.winner = 'draw';
       }
+    }
+  } else if (g.phase === 'countdown') {
+    // 3-2-1 geri sayim: her saniye azalt, 0'a inince maci baslat
+    g.countdownAccum += TICK_MS;
+    if (g.countdownAccum >= 1000) {
+      g.countdownAccum -= 1000;
+      g.countdown -= 1;
+      if (g.countdown <= 0) startMatch(g); // faz -> playing
     }
   }
 
@@ -243,9 +266,10 @@ wss.on('connection', (ws, req) => {
         room.game = newGame();
         resetPositions(room.game); // bekleme aninda da saha dolu gorunsun
         console.log(`[oda] ${code} guest katildi, eslesme`);
+        room.game.phase = 'lobby'; // otomatik baslatma yok; lobide bekle
         send(room.host, { type: 'match_start', role: 'host' });
         send(room.guest, { type: 'match_start', role: 'guest' });
-        startLoop(room); // state yayini baslar (faz: waiting)
+        startLoop(room); // state yayini baslar (faz: lobby)
         break;
       }
 
@@ -257,7 +281,9 @@ wss.on('connection', (ws, req) => {
         if (msg.matchType === 'time' || msg.matchType === 'score') g.matchType = msg.matchType;
         if (typeof msg.goalLimit === 'number') g.goalLimit = msg.goalLimit;
         if (typeof msg.timeLimit === 'number') g.timeLimit = msg.timeLimit;
-        if (found.room.host && found.room.guest) startMatch(g);
+        // Lobi: ayar guncellenir, broadcast'te yayinlanir; mac READY ile baslar.
+        // Ayar degisince hazir bayraklarini sifirla (yeniden onay gereksin)
+        if (g.phase === 'lobby') g.ready = { p1: false, p2: false };
         break;
       }
 
@@ -291,15 +317,15 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
-      // Rematch: bu client hazir. Ikisi de hazirsa yeni mac.
+      // Hazir: lobi (ilk mac) veya over (rematch). Ikisi de hazirsa 3-2-1 geri sayim.
       case 'ready': {
         const found = getRoomOfClient(ws);
         if (!found) return;
         const role = roleOf(found.room, ws);
         const g = found.room.game;
-        if (g.phase !== 'over') return;
+        if (g.phase !== 'lobby' && g.phase !== 'over') return;
         g.ready[role] = true;
-        if (g.ready.p1 && g.ready.p2) startMatch(g);
+        if (g.ready.p1 && g.ready.p2) startCountdown(g); // 3-2-1 sonra startMatch
         break;
       }
 
