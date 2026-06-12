@@ -8,6 +8,7 @@ const physics = require('./physics.js');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const TICK_MS = 1000 / 60;
+const GRACE_MS = 20000; // beklenmedik kopmada reconnect icin bekleme suresi (ms)
 
 // Kanonik saha (sabit). Client'lar bunu kendi ekranina olceklendirir.
 const FIELD = { w: 820, h: 480, goalSize: 480 * 0.4, goalOnSides: true };
@@ -39,6 +40,11 @@ function generateRoomCode() {
     if (!rooms.has(code)) return code;
   }
   return null;
+}
+
+// Reconnect icin slot kimligi (her oyuncuya verilir, kopunca bununla geri doner)
+function genToken() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 function send(ws, obj) {
@@ -86,6 +92,7 @@ function newGame() {
     kickedP2: false,
     pressedP1: false, // butona basti (topa degse de degmese de) -> halka
     pressedP2: false,
+    waitingReconnect: null, // 'p1'|'p2' kopuksa oyun donar, reconnect beklenir
     loop: null,
   };
 }
@@ -139,6 +146,7 @@ function broadcast(room) {
     kickedP2: g.kickedP2,
     pressedP1: g.pressedP1,
     pressedP2: g.pressedP2,
+    waitingReconnect: g.waitingReconnect,
   };
   send(room.host, msg);
   send(room.guest, msg);
@@ -151,6 +159,12 @@ function broadcast(room) {
 
 function tick(room) {
   const g = room.game;
+
+  if (g.waitingReconnect) {
+    // bir oyuncu kopuk -> oyunu dondur, sadece durumu yayinla (grace suresi)
+    broadcast(room);
+    return;
+  }
 
   if (g.phase === 'playing') {
     // Butona basis (topa degse de degmese de) -> halka icin, kick tuketilmeden once
@@ -220,6 +234,7 @@ function leaveRoom(ws) {
   const found = getRoomOfClient(ws);
   if (!found) return;
   const { code, room } = found;
+  if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
   const wasHost = room.host === ws;
   const peer = wasHost ? room.guest : room.host;
   if (peer) send(peer, { type: 'peer_left' });
@@ -233,6 +248,45 @@ function leaveRoom(ws) {
     stopLoop(room);
     room.game = newGame();
     console.log(`[oda] ${code} guest ayrildi, bekleme moduna dondu`);
+  }
+}
+
+// Beklenmedik kopma: slotu tut, oyunu dondur, grace sayaci basla
+function handleDisconnect(code, room, slot) {
+  if (!slot) return;
+  // Host tek basinaysa (lobi/mac yok) -> reconnect'e gerek yok, direkt kapat
+  if (slot === 'p1' && !room.guest) {
+    if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
+    stopLoop(room);
+    rooms.delete(code);
+    console.log(`[oda] ${code} kapandi (host ayrildi, bos oda)`);
+    return;
+  }
+  // Slotu bosalt ama oda+token dursun; oyunu dondur, rakibe bildir
+  if (slot === 'p1') room.host = null; else room.guest = null;
+  room.game.waitingReconnect = slot;
+  console.log(`[oda] ${code} ${slot} koptu, ${GRACE_MS / 1000}sn reconnect bekleniyor`);
+  if (room.discTimer) clearTimeout(room.discTimer);
+  room.discTimer = setTimeout(() => {
+    room.discTimer = null;
+    finalizeLeave(code, room, slot);
+  }, GRACE_MS);
+}
+
+// Grace doldu: kalici ayrilma
+function finalizeLeave(code, room, slot) {
+  if (!rooms.has(code)) return;
+  const peer = slot === 'p1' ? room.guest : room.host;
+  if (peer) send(peer, { type: 'peer_left' });
+  if (slot === 'p1') {
+    stopLoop(room);
+    rooms.delete(code);
+    console.log(`[oda] ${code} kapandi (reconnect olmadi)`);
+  } else {
+    room.guest = null;
+    stopLoop(room);
+    room.game = newGame();
+    console.log(`[oda] ${code} guest reconnect olmadi, bekleme moduna`);
   }
 }
 
@@ -273,12 +327,33 @@ wss.on('connection', (ws, req) => {
 
         room.guest = ws;
         room.game = newGame();
+        room.tokens = { p1: genToken(), p2: genToken() }; // reconnect tokenlari
         resetPositions(room.game); // bekleme aninda da saha dolu gorunsun
         console.log(`[oda] ${code} guest katildi, eslesme`);
         room.game.phase = 'lobby'; // otomatik baslatma yok; lobide bekle
-        send(room.host, { type: 'match_start', role: 'host' });
-        send(room.guest, { type: 'match_start', role: 'guest' });
+        send(room.host, { type: 'match_start', role: 'host', code, token: room.tokens.p1 });
+        send(room.guest, { type: 'match_start', role: 'guest', code, token: room.tokens.p2 });
         startLoop(room); // state yayini baslar (faz: lobby)
+        break;
+      }
+
+      // Reconnect: kopan oyuncu token ile geri doner
+      case 'rejoin': {
+        const code = String(msg.code || '').trim();
+        const token = String(msg.token || '');
+        const room = rooms.get(code);
+        if (!room || !room.tokens) { send(ws, { type: 'rejoin_failed', reason: 'Oda yok' }); return; }
+        let slot = null;
+        if (room.tokens.p1 === token && room.host === null) slot = 'p1';
+        else if (room.tokens.p2 === token && room.guest === null) slot = 'p2';
+        if (!slot) { send(ws, { type: 'rejoin_failed', reason: 'Gecersiz' }); return; }
+        // Slotu yeni baglantiya bagla, oyunu coz
+        if (slot === 'p1') room.host = ws; else room.guest = ws;
+        if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
+        room.game.waitingReconnect = null;
+        console.log(`[oda] ${code} ${slot} geri baglandi`);
+        send(ws, { type: 'match_start', role: slot === 'p1' ? 'host' : 'guest', code, token });
+        // loop zaten calisiyor; sonraki tick state yollar
         break;
       }
 
@@ -356,7 +431,9 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     console.log(`[-] Baglanti kapandi: ${clientId}`);
-    leaveRoom(ws);
+    const found = getRoomOfClient(ws);
+    if (!found) return; // odada degil (ya da kasitli leave_room ile cikmis)
+    handleDisconnect(found.code, found.room, roleOf(found.room, ws));
   });
   ws.on('error', () => {});
 });
