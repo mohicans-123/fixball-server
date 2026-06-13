@@ -47,6 +47,25 @@ function genToken() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+// Acik (rakip bekleyen) odalarin listesi
+function buildRoomList() {
+  const list = [];
+  for (const [code, room] of rooms) {
+    if (room.host && room.guest === null && !(room.game && room.game.waitingReconnect)) {
+      list.push({ code, host: (room.host.nickname || 'Oyuncu') });
+    }
+  }
+  return list;
+}
+
+// Listeyi "bekleme/bosta" (odada olmayan) tum istemcilere yayinla
+function broadcastRoomList() {
+  const payload = { type: 'room_list', rooms: buildRoomList() };
+  wss.clients.forEach((c) => {
+    if (c.readyState === c.OPEN && !getRoomOfClient(c)) send(c, payload);
+  });
+}
+
 function send(ws, obj) {
   if (ws && ws.readyState === ws.OPEN) {
     try { ws.send(JSON.stringify(obj)); } catch (e) {}
@@ -249,6 +268,7 @@ function leaveRoom(ws) {
     room.game = newGame();
     console.log(`[oda] ${code} guest ayrildi, bekleme moduna dondu`);
   }
+  broadcastRoomList();
 }
 
 // Beklenmedik kopma: slotu tut, oyunu dondur, grace sayaci basla
@@ -260,6 +280,7 @@ function handleDisconnect(code, room, slot) {
     stopLoop(room);
     rooms.delete(code);
     console.log(`[oda] ${code} kapandi (host ayrildi, bos oda)`);
+    broadcastRoomList();
     return;
   }
   // Slotu bosalt ama oda+token dursun; oyunu dondur, rakibe bildir
@@ -288,6 +309,7 @@ function finalizeLeave(code, room, slot) {
     room.game = newGame();
     console.log(`[oda] ${code} guest reconnect olmadi, bekleme moduna`);
   }
+  broadcastRoomList();
 }
 
 // === Baglanti ===
@@ -298,6 +320,7 @@ wss.on('connection', (ws, req) => {
   try { if (req.socket && req.socket.setNoDelay) req.socket.setNoDelay(true); } catch (e) {}
 
   send(ws, { type: 'hello', clientId, serverTime: Date.now() });
+  send(ws, { type: 'room_list', rooms: buildRoomList() }); // mevcut acik odalar
 
   ws.on('message', (data) => {
     let msg;
@@ -306,6 +329,14 @@ wss.on('connection', (ws, req) => {
 
     switch (msg.type) {
 
+      // Takma ad: oyuncuyu listede tanitmak icin (Stage 2/3 kullanir)
+      case 'set_nick': {
+        let n = String(msg.name || '').trim().slice(0, 12);
+        if (!n) n = 'Oyuncu' + String(ws.clientId).replace(/\D/g, '');
+        ws.nickname = n;
+        break;
+      }
+
       case 'create_room': {
         if (getRoomOfClient(ws)) { send(ws, { type: 'error', message: 'Zaten bir odadasin' }); return; }
         const code = generateRoomCode();
@@ -313,6 +344,7 @@ wss.on('connection', (ws, req) => {
         rooms.set(code, { host: ws, guest: null, code, game: newGame() });
         console.log(`[oda] ${code} olusturuldu`);
         send(ws, { type: 'room_created', code });
+        broadcastRoomList(); // yeni acik oda
         break;
       }
 
@@ -334,6 +366,13 @@ wss.on('connection', (ws, req) => {
         send(room.host, { type: 'match_start', role: 'host', code, token: room.tokens.p1 });
         send(room.guest, { type: 'match_start', role: 'guest', code, token: room.tokens.p2 });
         startLoop(room); // state yayini baslar (faz: lobby)
+        broadcastRoomList(); // oda doldu -> listeden cikar
+        break;
+      }
+
+      // Acik oda listesini iste (manuel yenileme)
+      case 'request_rooms': {
+        send(ws, { type: 'room_list', rooms: buildRoomList() });
         break;
       }
 
