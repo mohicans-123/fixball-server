@@ -58,12 +58,70 @@ function buildRoomList() {
   return list;
 }
 
-// Listeyi "bekleme/bosta" (odada olmayan) tum istemcilere yayinla
-function broadcastRoomList() {
-  const payload = { type: 'room_list', rooms: buildRoomList() };
+// Online oyuncular (hepsi; busy=odada/macta)
+function buildPlayerList() {
+  const list = [];
   wss.clients.forEach((c) => {
-    if (c.readyState === c.OPEN && !getRoomOfClient(c)) send(c, payload);
+    if (c.readyState !== c.OPEN || !c.clientId) return;
+    list.push({
+      id: c.clientId,
+      nick: c.nickname || ('Oyuncu' + String(c.clientId).replace(/\D/g, '')),
+      busy: !!getRoomOfClient(c),
+    });
   });
+  return list;
+}
+
+// Tek istemciye lobi durumu (acik odalar + oyuncular)
+function sendLobby(ws) {
+  send(ws, { type: 'room_list', rooms: buildRoomList() });
+  send(ws, { type: 'player_list', players: buildPlayerList() });
+}
+
+// Odada olmayan (bosta) tum istemcilere lobi durumunu yayinla
+function broadcastLobby() {
+  wss.clients.forEach((c) => {
+    if (c.readyState === c.OPEN && !getRoomOfClient(c)) sendLobby(c);
+  });
+}
+
+function findClient(id) {
+  for (const c of wss.clients) {
+    if (c.clientId === id && c.readyState === c.OPEN) return c;
+  }
+  return null;
+}
+
+// Bekleyen meydan okumayi her iki tarafta da temizle
+function clearChallenge(ws) {
+  if (!ws) return;
+  if (ws.challengeTimer) { clearTimeout(ws.challengeTimer); ws.challengeTimer = null; }
+  const otherId = ws.challengeTo || ws.challengeFrom;
+  ws.challengeTo = null;
+  ws.challengeFrom = null;
+  if (otherId) {
+    const other = findClient(otherId);
+    if (other) {
+      if (other.challengeTimer) { clearTimeout(other.challengeTimer); other.challengeTimer = null; }
+      other.challengeTo = null;
+      other.challengeFrom = null;
+    }
+  }
+}
+
+// Iki oyuncuyu yeni bir odada eslestir (meydan okuma kabul edilince)
+function beginMatch(hostWs, guestWs) {
+  const code = generateRoomCode();
+  if (!code) return null;
+  const game = newGame();
+  resetPositions(game);
+  game.phase = 'lobby';
+  const room = { host: hostWs, guest: guestWs, code, game, tokens: { p1: genToken(), p2: genToken() } };
+  rooms.set(code, room);
+  send(hostWs, { type: 'match_start', role: 'host', code, token: room.tokens.p1 });
+  send(guestWs, { type: 'match_start', role: 'guest', code, token: room.tokens.p2 });
+  startLoop(room);
+  return code;
 }
 
 function send(ws, obj) {
@@ -268,7 +326,7 @@ function leaveRoom(ws) {
     room.game = newGame();
     console.log(`[oda] ${code} guest ayrildi, bekleme moduna dondu`);
   }
-  broadcastRoomList();
+  broadcastLobby();
 }
 
 // Beklenmedik kopma: slotu tut, oyunu dondur, grace sayaci basla
@@ -280,7 +338,7 @@ function handleDisconnect(code, room, slot) {
     stopLoop(room);
     rooms.delete(code);
     console.log(`[oda] ${code} kapandi (host ayrildi, bos oda)`);
-    broadcastRoomList();
+    broadcastLobby();
     return;
   }
   // Slotu bosalt ama oda+token dursun; oyunu dondur, rakibe bildir
@@ -309,7 +367,7 @@ function finalizeLeave(code, room, slot) {
     room.game = newGame();
     console.log(`[oda] ${code} guest reconnect olmadi, bekleme moduna`);
   }
-  broadcastRoomList();
+  broadcastLobby();
 }
 
 // === Baglanti ===
@@ -320,7 +378,8 @@ wss.on('connection', (ws, req) => {
   try { if (req.socket && req.socket.setNoDelay) req.socket.setNoDelay(true); } catch (e) {}
 
   send(ws, { type: 'hello', clientId, serverTime: Date.now() });
-  send(ws, { type: 'room_list', rooms: buildRoomList() }); // mevcut acik odalar
+  sendLobby(ws);        // bu istemciye mevcut odalar + oyuncular
+  broadcastLobby();     // digerleri yeni oyuncuyu gorsun
 
   ws.on('message', (data) => {
     let msg;
@@ -334,17 +393,19 @@ wss.on('connection', (ws, req) => {
         let n = String(msg.name || '').trim().slice(0, 12);
         if (!n) n = 'Oyuncu' + String(ws.clientId).replace(/\D/g, '');
         ws.nickname = n;
+        broadcastLobby(); // ad listede guncellensin
         break;
       }
 
       case 'create_room': {
         if (getRoomOfClient(ws)) { send(ws, { type: 'error', message: 'Zaten bir odadasin' }); return; }
+        clearChallenge(ws); // odaya gecince bekleyen davet iptal
         const code = generateRoomCode();
         if (!code) { send(ws, { type: 'error', message: 'Oda olusturulamadi' }); return; }
         rooms.set(code, { host: ws, guest: null, code, game: newGame() });
         console.log(`[oda] ${code} olusturuldu`);
         send(ws, { type: 'room_created', code });
-        broadcastRoomList(); // yeni acik oda
+        broadcastLobby(); // yeni acik oda
         break;
       }
 
@@ -357,6 +418,7 @@ wss.on('connection', (ws, req) => {
         if (room.guest) { send(ws, { type: 'join_failed', reason: 'Oda dolu' }); return; }
         if (room.host === ws) { send(ws, { type: 'join_failed', reason: 'Kendi odana katilamazsin' }); return; }
 
+        clearChallenge(ws); // odaya gecince bekleyen davet iptal
         room.guest = ws;
         room.game = newGame();
         room.tokens = { p1: genToken(), p2: genToken() }; // reconnect tokenlari
@@ -366,13 +428,70 @@ wss.on('connection', (ws, req) => {
         send(room.host, { type: 'match_start', role: 'host', code, token: room.tokens.p1 });
         send(room.guest, { type: 'match_start', role: 'guest', code, token: room.tokens.p2 });
         startLoop(room); // state yayini baslar (faz: lobby)
-        broadcastRoomList(); // oda doldu -> listeden cikar
+        broadcastLobby(); // oda doldu -> listeden cikar
         break;
       }
 
-      // Acik oda listesini iste (manuel yenileme)
+      // Lobi durumunu iste (manuel yenileme)
       case 'request_rooms': {
-        send(ws, { type: 'room_list', rooms: buildRoomList() });
+        sendLobby(ws);
+        break;
+      }
+
+      // Bir oyuncuya maca davet (meydan oku)
+      case 'challenge': {
+        const targetId = String(msg.targetId || '');
+        if (getRoomOfClient(ws)) { send(ws, { type: 'challenge_failed', reason: 'Once odadan cik' }); return; }
+        if (ws.challengeTo) { send(ws, { type: 'challenge_failed', reason: 'Zaten davet gonderdin' }); return; }
+        const target = findClient(targetId);
+        if (!target || target === ws) { send(ws, { type: 'challenge_failed', reason: 'Oyuncu bulunamadi' }); return; }
+        if (getRoomOfClient(target) || target.challengeFrom || target.challengeTo) {
+          send(ws, { type: 'challenge_failed', reason: 'Oyuncu mesgul' }); return;
+        }
+        ws.challengeTo = targetId;
+        target.challengeFrom = ws.clientId;
+        send(target, { type: 'challenge_incoming', fromId: ws.clientId, fromNick: ws.nickname || 'Oyuncu' });
+        ws.challengeTimer = setTimeout(() => {
+          const t = findClient(targetId);
+          if (t) send(t, { type: 'challenge_cancelled' });
+          send(ws, { type: 'challenge_failed', reason: 'Yanit yok' });
+          clearChallenge(ws);
+        }, 20000);
+        break;
+      }
+
+      // Davete yanit (kabul/ret)
+      case 'challenge_response': {
+        const fromId = String(msg.fromId || '');
+        const accept = !!msg.accept;
+        if (ws.challengeFrom !== fromId) return; // gecersiz/eskimis davet
+        const challenger = findClient(fromId);
+        clearChallenge(ws); // iki tarafi + timer'lari temizler
+        if (!challenger) { send(ws, { type: 'challenge_failed', reason: 'Rakip ayrildi' }); return; }
+        if (!accept) {
+          send(challenger, { type: 'challenge_declined', byNick: ws.nickname || 'Oyuncu' });
+          return;
+        }
+        if (getRoomOfClient(challenger) || getRoomOfClient(ws)) {
+          send(challenger, { type: 'challenge_failed', reason: 'Oyuncu mesgul' });
+          send(ws, { type: 'challenge_failed', reason: 'Oyuncu mesgul' });
+          return;
+        }
+        const code = beginMatch(challenger, ws); // davet eden host, kabul eden guest
+        if (!code) {
+          send(challenger, { type: 'challenge_failed', reason: 'Oda olusturulamadi' });
+          send(ws, { type: 'challenge_failed', reason: 'Oda olusturulamadi' });
+          return;
+        }
+        console.log(`[oda] ${code} meydan okuma ile eslesti`);
+        broadcastLobby(); // ikisi de mesgul oldu
+        break;
+      }
+
+      // Daveti geri cek (davet eden iptal eder)
+      case 'cancel_challenge': {
+        if (ws.challengeTo) { const t = findClient(ws.challengeTo); if (t) send(t, { type: 'challenge_cancelled' }); }
+        clearChallenge(ws);
         break;
       }
 
@@ -470,9 +589,13 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     console.log(`[-] Baglanti kapandi: ${clientId}`);
+    // Bekleyen meydan okumayi temizle + karsiyi bilgilendir
+    if (ws.challengeTo) { const t = findClient(ws.challengeTo); if (t) send(t, { type: 'challenge_cancelled' }); }
+    if (ws.challengeFrom) { const c = findClient(ws.challengeFrom); if (c) send(c, { type: 'challenge_failed', reason: 'Oyuncu ayrildi' }); }
+    clearChallenge(ws);
     const found = getRoomOfClient(ws);
-    if (!found) return; // odada degil (ya da kasitli leave_room ile cikmis)
-    handleDisconnect(found.code, found.room, roleOf(found.room, ws));
+    if (found) handleDisconnect(found.code, found.room, roleOf(found.room, ws));
+    broadcastLobby(); // idle oyuncu da listeden dussun
   });
   ws.on('error', () => {});
 });
