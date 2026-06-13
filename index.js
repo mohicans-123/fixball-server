@@ -403,10 +403,10 @@ wss.on('connection', (ws, req) => {
       }
 
       case 'create_room': {
-        if (getRoomOfClient(ws)) { send(ws, { type: 'error', message: 'Zaten bir odadasin' }); return; }
+        if (getRoomOfClient(ws)) { send(ws, { type: 'error', message: 'already_in_room' }); return; }
         clearChallenge(ws); // odaya gecince bekleyen davet iptal
         const code = generateRoomCode();
-        if (!code) { send(ws, { type: 'error', message: 'Oda olusturulamadi' }); return; }
+        if (!code) { send(ws, { type: 'error', message: 'room_create_failed' }); return; }
         rooms.set(code, { host: ws, guest: null, code, game: newGame(), isPrivate: !!msg.private });
         console.log(`[oda] ${code} olusturuldu${msg.private ? ' (ozel)' : ''}`);
         send(ws, { type: 'room_created', code });
@@ -416,12 +416,12 @@ wss.on('connection', (ws, req) => {
 
       case 'join_room': {
         const code = String(msg.code || '').trim();
-        if (!code) { send(ws, { type: 'join_failed', reason: 'Kod bos' }); return; }
-        if (getRoomOfClient(ws)) { send(ws, { type: 'join_failed', reason: 'Zaten bir odadasin' }); return; }
+        if (!code) { send(ws, { type: 'join_failed', reason: 'empty_code' }); return; }
+        if (getRoomOfClient(ws)) { send(ws, { type: 'join_failed', reason: 'already_in_room' }); return; }
         const room = rooms.get(code);
-        if (!room) { send(ws, { type: 'join_failed', reason: 'Oda bulunamadi' }); return; }
-        if (room.guest) { send(ws, { type: 'join_failed', reason: 'Oda dolu' }); return; }
-        if (room.host === ws) { send(ws, { type: 'join_failed', reason: 'Kendi odana katilamazsin' }); return; }
+        if (!room) { send(ws, { type: 'join_failed', reason: 'room_not_found' }); return; }
+        if (room.guest) { send(ws, { type: 'join_failed', reason: 'room_full' }); return; }
+        if (room.host === ws) { send(ws, { type: 'join_failed', reason: 'own_room' }); return; }
 
         clearChallenge(ws); // odaya gecince bekleyen davet iptal
         room.guest = ws;
@@ -446,12 +446,12 @@ wss.on('connection', (ws, req) => {
       // Bir oyuncuya maca davet (meydan oku)
       case 'challenge': {
         const targetId = String(msg.targetId || '');
-        if (getRoomOfClient(ws)) { send(ws, { type: 'challenge_failed', reason: 'Once odadan cik' }); return; }
-        if (ws.challengeTo) { send(ws, { type: 'challenge_failed', reason: 'Zaten davet gonderdin' }); return; }
+        if (getRoomOfClient(ws)) { send(ws, { type: 'challenge_failed', reason: 'leave_room_first' }); return; }
+        if (ws.challengeTo) { send(ws, { type: 'challenge_failed', reason: 'already_invited' }); return; }
         const target = findClient(targetId);
-        if (!target || target === ws) { send(ws, { type: 'challenge_failed', reason: 'Oyuncu bulunamadi' }); return; }
+        if (!target || target === ws) { send(ws, { type: 'challenge_failed', reason: 'player_not_found' }); return; }
         if (getRoomOfClient(target) || target.challengeFrom || target.challengeTo) {
-          send(ws, { type: 'challenge_failed', reason: 'Oyuncu mesgul' }); return;
+          send(ws, { type: 'challenge_failed', reason: 'player_busy' }); return;
         }
         ws.challengeTo = targetId;
         target.challengeFrom = ws.clientId;
@@ -459,7 +459,7 @@ wss.on('connection', (ws, req) => {
         ws.challengeTimer = setTimeout(() => {
           const t = findClient(targetId);
           if (t) send(t, { type: 'challenge_cancelled' });
-          send(ws, { type: 'challenge_failed', reason: 'Yanit yok' });
+          send(ws, { type: 'challenge_failed', reason: 'no_answer' });
           clearChallenge(ws);
         }, 20000);
         break;
@@ -472,20 +472,20 @@ wss.on('connection', (ws, req) => {
         if (ws.challengeFrom !== fromId) return; // gecersiz/eskimis davet
         const challenger = findClient(fromId);
         clearChallenge(ws); // iki tarafi + timer'lari temizler
-        if (!challenger) { send(ws, { type: 'challenge_failed', reason: 'Rakip ayrildi' }); return; }
+        if (!challenger) { send(ws, { type: 'challenge_failed', reason: 'opponent_left' }); return; }
         if (!accept) {
           send(challenger, { type: 'challenge_declined', byNick: ws.nickname || 'Oyuncu' });
           return;
         }
         if (getRoomOfClient(challenger) || getRoomOfClient(ws)) {
-          send(challenger, { type: 'challenge_failed', reason: 'Oyuncu mesgul' });
-          send(ws, { type: 'challenge_failed', reason: 'Oyuncu mesgul' });
+          send(challenger, { type: 'challenge_failed', reason: 'player_busy' });
+          send(ws, { type: 'challenge_failed', reason: 'player_busy' });
           return;
         }
         const code = beginMatch(challenger, ws); // davet eden host, kabul eden guest
         if (!code) {
-          send(challenger, { type: 'challenge_failed', reason: 'Oda olusturulamadi' });
-          send(ws, { type: 'challenge_failed', reason: 'Oda olusturulamadi' });
+          send(challenger, { type: 'challenge_failed', reason: 'room_create_failed' });
+          send(ws, { type: 'challenge_failed', reason: 'room_create_failed' });
           return;
         }
         console.log(`[oda] ${code} meydan okuma ile eslesti`);
@@ -505,11 +505,11 @@ wss.on('connection', (ws, req) => {
         const code = String(msg.code || '').trim();
         const token = String(msg.token || '');
         const room = rooms.get(code);
-        if (!room || !room.tokens) { send(ws, { type: 'rejoin_failed', reason: 'Oda yok' }); return; }
+        if (!room || !room.tokens) { send(ws, { type: 'rejoin_failed', reason: 'no_room' }); return; }
         let slot = null;
         if (room.tokens.p1 === token && room.host === null) slot = 'p1';
         else if (room.tokens.p2 === token && room.guest === null) slot = 'p2';
-        if (!slot) { send(ws, { type: 'rejoin_failed', reason: 'Gecersiz' }); return; }
+        if (!slot) { send(ws, { type: 'rejoin_failed', reason: 'invalid' }); return; }
         // Slotu yeni baglantiya bagla, oyunu coz
         if (slot === 'p1') room.host = ws; else room.guest = ws;
         if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
@@ -606,7 +606,7 @@ wss.on('connection', (ws, req) => {
     console.log(`[-] Baglanti kapandi: ${clientId}`);
     // Bekleyen meydan okumayi temizle + karsiyi bilgilendir
     if (ws.challengeTo) { const t = findClient(ws.challengeTo); if (t) send(t, { type: 'challenge_cancelled' }); }
-    if (ws.challengeFrom) { const c = findClient(ws.challengeFrom); if (c) send(c, { type: 'challenge_failed', reason: 'Oyuncu ayrildi' }); }
+    if (ws.challengeFrom) { const c = findClient(ws.challengeFrom); if (c) send(c, { type: 'challenge_failed', reason: 'opponent_left' }); }
     clearChallenge(ws);
     const found = getRoomOfClient(ws);
     if (found) handleDisconnect(found.code, found.room, roleOf(found.room, ws));
