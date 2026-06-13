@@ -51,7 +51,7 @@ function genToken() {
 function buildRoomList() {
   const list = [];
   for (const [code, room] of rooms) {
-    if (room.host && room.guest === null && !(room.game && room.game.waitingReconnect)) {
+    if (room.host && room.guest === null && !room.isPrivate && !(room.game && room.game.waitingReconnect)) {
       list.push({ code, host: (room.host.nickname || 'Oyuncu') });
     }
   }
@@ -407,10 +407,10 @@ wss.on('connection', (ws, req) => {
         clearChallenge(ws); // odaya gecince bekleyen davet iptal
         const code = generateRoomCode();
         if (!code) { send(ws, { type: 'error', message: 'Oda olusturulamadi' }); return; }
-        rooms.set(code, { host: ws, guest: null, code, game: newGame() });
-        console.log(`[oda] ${code} olusturuldu`);
+        rooms.set(code, { host: ws, guest: null, code, game: newGame(), isPrivate: !!msg.private });
+        console.log(`[oda] ${code} olusturuldu${msg.private ? ' (ozel)' : ''}`);
         send(ws, { type: 'room_created', code });
-        broadcastLobby(); // yeni acik oda
+        broadcastLobby();
         break;
       }
 
