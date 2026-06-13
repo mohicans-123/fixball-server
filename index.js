@@ -11,7 +11,7 @@ const TICK_MS = 1000 / 60;
 const GRACE_MS = 20000; // beklenmedik kopmada reconnect icin bekleme suresi (ms)
 
 // Kanonik saha (sabit). Client'lar bunu kendi ekranina olceklendirir.
-const FIELD = { w: 984, h: 576, goalSize: 576 * 0.4, goalOnSides: true };
+const FIELD = { w: 820, h: 480, goalSize: 480 * 0.4, goalOnSides: true };
 
 // === HTTP (health) ===
 const httpServer = http.createServer((req, res) => {
