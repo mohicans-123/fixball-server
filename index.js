@@ -582,6 +582,16 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      // Mac ici emote: rakibe ilet
+      case 'emote': {
+        const found = getRoomOfClient(ws);
+        if (!found) break;
+        const { room } = found;
+        const peer = room.host === ws ? room.guest : room.host;
+        if (peer) send(peer, { type: 'emote', emoji: String(msg.emoji || '').slice(0, 12) });
+        break;
+      }
+
       case 'ping': {
         send(ws, { type: 'pong', t: msg.t });
         break;
