@@ -320,6 +320,11 @@ function leaveRoom(ws) {
     stopLoop(room);
     rooms.delete(code);
     console.log(`[oda] ${code} kapandi (host ayrildi)`);
+  } else if (!room.host) {
+    // Host zaten yok (grace'teydi) ve guest de cikti -> oda tamamen bos, sil
+    stopLoop(room);
+    rooms.delete(code);
+    console.log(`[oda] ${code} kapandi (ikisi de gitti)`);
   } else {
     room.guest = null;
     stopLoop(room);
