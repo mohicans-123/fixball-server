@@ -263,17 +263,6 @@ function tick(room) {
   }
 
   if (g.phase === 'playing') {
-    // Gol sevinç esi: simulasyonu birkaç tick dondur (top golde kalir), sonra kickoff
-    if (g.goalPause > 0) {
-      g.goalPause -= TICK_MS;
-      if (g.goalPause <= 0) {
-        g.goalPause = 0;
-        resetPositions(g);
-      }
-      broadcast(room);
-      return;
-    }
-
     // Butona basis (topa degse de degmese de) -> halka icin, kick tuketilmeden once
     g.pressedP1 = g.inputs.p1.kick;
     g.pressedP2 = g.inputs.p2.kick;
@@ -288,7 +277,14 @@ function tick(room) {
     g.kickedP1 = ev.p1Kicked; // topa degdi -> ses
     g.kickedP2 = ev.p2Kicked;
 
-    if (ev.scored) {
+    if (g.goalPause > 0) {
+      // Gol sonrasi: oyun normal akar (hicbir sey donmaz), yeni gol sayilmaz; sure dolunca kickoff
+      g.goalPause -= TICK_MS;
+      if (g.goalPause <= 0) {
+        g.goalPause = 0;
+        resetPositions(g);
+      }
+    } else if (ev.scored) {
       g.score[ev.scored] += 1;
       // Skor limitli mac: kazanma kontrolu
       let matchOver = false;
@@ -299,11 +295,8 @@ function tick(room) {
       if (matchOver) {
         resetPositions(g);
       } else {
-        // Gol sevinç esi: pozisyonu sifirlamadan dondur, top golde kalsin
+        // Oyun akmaya devam eder; sure dolunca orta acilis
         g.goalPause = GOAL_PAUSE_MS;
-        g.ball.vx = 0; g.ball.vy = 0;
-        g.p1.vx = 0; g.p1.vy = 0;
-        g.p2.vx = 0; g.p2.vy = 0;
       }
     }
 
