@@ -109,6 +109,22 @@ function clearChallenge(ws) {
   }
 }
 
+// ===== Oyuncu profili (renk + etiket) =====
+function sanitizeColor(c) {
+  c = String(c || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(c) ? c : '#3498db';
+}
+function sanitizeTag(t) {
+  return String(t || '').replace(/\s+/g, '').slice(0, 3);
+}
+function profileOf(ws) {
+  return {
+    nick: (ws && ws.nickname) || 'Oyuncu',
+    color: (ws && ws.color) || '#3498db',
+    tag: (ws && ws.tag) || '',
+  };
+}
+
 // Iki oyuncuyu yeni bir odada eslestir (meydan okuma kabul edilince)
 function beginMatch(hostWs, guestWs) {
   const code = generateRoomCode();
@@ -118,8 +134,8 @@ function beginMatch(hostWs, guestWs) {
   game.phase = 'lobby';
   const room = { host: hostWs, guest: guestWs, code, game, tokens: { p1: genToken(), p2: genToken() } };
   rooms.set(code, room);
-  send(hostWs, { type: 'match_start', role: 'host', code, token: room.tokens.p1 });
-  send(guestWs, { type: 'match_start', role: 'guest', code, token: room.tokens.p2 });
+  send(hostWs, { type: 'match_start', role: 'host', code, token: room.tokens.p1, opp: profileOf(guestWs) });
+  send(guestWs, { type: 'match_start', role: 'guest', code, token: room.tokens.p2, opp: profileOf(hostWs) });
   startLoop(room);
   return code;
 }
@@ -402,6 +418,17 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      // Profil: takma ad + renk + etiket (yeni istemci). Eski istemci set_nick yollar.
+      case 'set_profile': {
+        let n = String(msg.name || '').trim().slice(0, 12);
+        if (!n) n = 'Oyuncu' + String(ws.clientId).replace(/\D/g, '');
+        ws.nickname = n;
+        ws.color = sanitizeColor(msg.color);
+        ws.tag = sanitizeTag(msg.tag);
+        broadcastLobby(); // ad listede guncellensin
+        break;
+      }
+
       case 'create_room': {
         if (getRoomOfClient(ws)) { send(ws, { type: 'error', message: 'already_in_room' }); return; }
         clearChallenge(ws); // odaya gecince bekleyen davet iptal
@@ -430,8 +457,8 @@ wss.on('connection', (ws, req) => {
         resetPositions(room.game); // bekleme aninda da saha dolu gorunsun
         console.log(`[oda] ${code} guest katildi, eslesme`);
         room.game.phase = 'lobby'; // otomatik baslatma yok; lobide bekle
-        send(room.host, { type: 'match_start', role: 'host', code, token: room.tokens.p1 });
-        send(room.guest, { type: 'match_start', role: 'guest', code, token: room.tokens.p2 });
+        send(room.host, { type: 'match_start', role: 'host', code, token: room.tokens.p1, opp: profileOf(room.guest) });
+        send(room.guest, { type: 'match_start', role: 'guest', code, token: room.tokens.p2, opp: profileOf(room.host) });
         startLoop(room); // state yayini baslar (faz: lobby)
         broadcastLobby(); // oda doldu -> listeden cikar
         break;
@@ -515,7 +542,8 @@ wss.on('connection', (ws, req) => {
         if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
         room.game.waitingReconnect = null;
         console.log(`[oda] ${code} ${slot} geri baglandi`);
-        send(ws, { type: 'match_start', role: slot === 'p1' ? 'host' : 'guest', code, token });
+        const otherWs = slot === 'p1' ? room.guest : room.host;
+        send(ws, { type: 'match_start', role: slot === 'p1' ? 'host' : 'guest', code, token, opp: profileOf(otherWs) });
         // loop zaten calisiyor; sonraki tick state yollar
         break;
       }
