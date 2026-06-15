@@ -264,6 +264,7 @@ function tick(room) {
 
   if (g.phase === 'playing') {
     // Butona basis (topa degse de degmese de) -> halka icin, kick tuketilmeden once
+    const frozenBallX = g.ball.x, frozenBallY = g.ball.y; // gol penceresinde topu golde dondurmak icin
     g.pressedP1 = g.inputs.p1.kick;
     g.pressedP2 = g.inputs.p2.kick;
     const ev = physics.simulate(
@@ -278,7 +279,9 @@ function tick(room) {
     g.kickedP2 = ev.p2Kicked;
 
     if (g.goalPause > 0) {
-      // Gol sonrasi: oyun normal akar (hicbir sey donmaz), yeni gol sayilmaz; sure dolunca kickoff
+      // Gol penceresi: top golde donuk kalir, oyuncular hareket eder; sure dolunca orta acilis
+      g.ball.x = frozenBallX; g.ball.y = frozenBallY;
+      g.ball.vx = 0; g.ball.vy = 0;
       g.goalPause -= TICK_MS;
       if (g.goalPause <= 0) {
         g.goalPause = 0;
