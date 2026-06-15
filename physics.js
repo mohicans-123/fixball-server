@@ -86,38 +86,46 @@ function clampToField(obj, r, field) {
   if (goalOnSides) {
     const yMin = (h - goalSize) / 2;
     const yMax = (h + goalSize) / 2;
-    const inLane = (obj.y - r) >= yMin && (obj.y + r) <= yMax;
-    if (inLane) {
+    const inGoal = obj.x < 0 || obj.x > w; // gol cizgisini gecti -> kale kutusu icinde
+    if (inGoal) {
+      // Ag ust/alt duvarlari: top kalede tutulur, yandan disari cikamaz
       if (obj.y < yMin + r) { obj.y = yMin + r; obj.vy *= -COLLISION_RESTITUTION; }
       if (obj.y > yMax - r) { obj.y = yMax - r; obj.vy *= -COLLISION_RESTITUTION; }
-    } else {
-      if (obj.y < r) { obj.y = r; obj.vy *= -COLLISION_RESTITUTION; }
-      if (obj.y > h - r) { obj.y = h - r; obj.vy *= -COLLISION_RESTITUTION; }
-    }
-    if (!inLane) {
-      if (obj.x < r) { obj.x = r; obj.vx *= -COLLISION_RESTITUTION; }
-      if (obj.x > w - r) { obj.x = w - r; obj.vx *= -COLLISION_RESTITUTION; }
-    } else {
+      // Arka ag duvari
       if (obj.x < -GOAL_INNER_DEPTH + r) { obj.x = -GOAL_INNER_DEPTH + r; obj.vx *= -COLLISION_RESTITUTION; }
       if (obj.x > w + GOAL_INNER_DEPTH - r) { obj.x = w + GOAL_INNER_DEPTH - r; obj.vx *= -COLLISION_RESTITUTION; }
+    } else {
+      // Saha ust/alt duvar
+      if (obj.y < r) { obj.y = r; obj.vy *= -COLLISION_RESTITUTION; }
+      if (obj.y > h - r) { obj.y = h - r; obj.vy *= -COLLISION_RESTITUTION; }
+      // Saha sol/sag duvar: kale agzi hizasinda degilse blokla (agizdaysa kaleye girebilir)
+      const yInOpening = obj.y > yMin && obj.y < yMax;
+      if (!yInOpening) {
+        if (obj.x < r) { obj.x = r; obj.vx *= -COLLISION_RESTITUTION; }
+        if (obj.x > w - r) { obj.x = w - r; obj.vx *= -COLLISION_RESTITUTION; }
+      }
     }
   } else {
     const xMin = (w - goalSize) / 2;
     const xMax = (w + goalSize) / 2;
-    const inLane = (obj.x - r) >= xMin && (obj.x + r) <= xMax;
-    if (inLane) {
+    const inGoal = obj.y < 0 || obj.y > h; // gol cizgisini gecti -> kale kutusu icinde
+    if (inGoal) {
+      // Ag sol/sag duvarlari: top kalede tutulur, yandan disari cikamaz
       if (obj.x < xMin + r) { obj.x = xMin + r; obj.vx *= -COLLISION_RESTITUTION; }
       if (obj.x > xMax - r) { obj.x = xMax - r; obj.vx *= -COLLISION_RESTITUTION; }
-    } else {
-      if (obj.x < r) { obj.x = r; obj.vx *= -COLLISION_RESTITUTION; }
-      if (obj.x > w - r) { obj.x = w - r; obj.vx *= -COLLISION_RESTITUTION; }
-    }
-    if (!inLane) {
-      if (obj.y < r) { obj.y = r; obj.vy *= -COLLISION_RESTITUTION; }
-      if (obj.y > h - r) { obj.y = h - r; obj.vy *= -COLLISION_RESTITUTION; }
-    } else {
+      // Arka ag duvari
       if (obj.y < -GOAL_INNER_DEPTH + r) { obj.y = -GOAL_INNER_DEPTH + r; obj.vy *= -COLLISION_RESTITUTION; }
       if (obj.y > h + GOAL_INNER_DEPTH - r) { obj.y = h + GOAL_INNER_DEPTH - r; obj.vy *= -COLLISION_RESTITUTION; }
+    } else {
+      // Saha sol/sag duvar
+      if (obj.x < r) { obj.x = r; obj.vx *= -COLLISION_RESTITUTION; }
+      if (obj.x > w - r) { obj.x = w - r; obj.vx *= -COLLISION_RESTITUTION; }
+      // Saha ust/alt duvar: kale agzi hizasinda degilse blokla
+      const xInOpening = obj.x > xMin && obj.x < xMax;
+      if (!xInOpening) {
+        if (obj.y < r) { obj.y = r; obj.vy *= -COLLISION_RESTITUTION; }
+        if (obj.y > h - r) { obj.y = h - r; obj.vy *= -COLLISION_RESTITUTION; }
+      }
     }
   }
 }
