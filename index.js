@@ -8,7 +8,7 @@ const physics = require('./physics.js');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const TICK_MS = 1000 / 60;
-const GOAL_PAUSE_MS = 1500; // gol sonrasi sevinç esi (simulasyon donar, top golde kalir)
+const GOAL_PAUSE_MS = 2000; // gol sonrasi gecikmeli orta acilis (oyun akar, ikinci gol sayilmaz)
 const GRACE_MS = 20000; // beklenmedik kopmada reconnect icin bekleme suresi (ms)
 
 // Kanonik saha (sabit). Client'lar bunu kendi ekranina olceklendirir.
