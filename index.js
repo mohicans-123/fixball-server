@@ -8,6 +8,7 @@ const physics = require('./physics.js');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const TICK_MS = 1000 / 60;
+const GOAL_PAUSE_MS = 1500; // gol sonrasi sevinç esi (simulasyon donar, top golde kalir)
 const GRACE_MS = 20000; // beklenmedik kopmada reconnect icin bekleme suresi (ms)
 
 // Kanonik saha (sabit). Client'lar bunu kendi ekranina olceklendirir.
@@ -180,6 +181,7 @@ function newGame() {
     ready: { p1: false, p2: false },
     countdown: 0,        // lobi sonrasi 3-2-1 geri sayim (0 = yok)
     countdownAccum: 0,   // geri sayim ms biriktirici
+    goalPause: 0,        // gol sonrasi sevinç esi (ms; >0 ise simulasyon donar)
     ballHitPost: false,
     kickedP1: false,
     kickedP2: false,
@@ -204,6 +206,7 @@ function startMatch(g) {
   g.ready = { p1: false, p2: false };
   g.countdown = 0;
   g.countdownAccum = 0;
+  g.goalPause = 0;
   g.timeAccum = 0;
   g.timeLeft = g.matchType === 'time' ? g.timeLimit : 0;
   resetPositions(g);
@@ -260,6 +263,17 @@ function tick(room) {
   }
 
   if (g.phase === 'playing') {
+    // Gol sevinç esi: simulasyonu birkaç tick dondur (top golde kalir), sonra kickoff
+    if (g.goalPause > 0) {
+      g.goalPause -= TICK_MS;
+      if (g.goalPause <= 0) {
+        g.goalPause = 0;
+        resetPositions(g);
+      }
+      broadcast(room);
+      return;
+    }
+
     // Butona basis (topa degse de degmese de) -> halka icin, kick tuketilmeden once
     g.pressedP1 = g.inputs.p1.kick;
     g.pressedP2 = g.inputs.p2.kick;
@@ -276,11 +290,20 @@ function tick(room) {
 
     if (ev.scored) {
       g.score[ev.scored] += 1;
-      resetPositions(g);
       // Skor limitli mac: kazanma kontrolu
+      let matchOver = false;
       if (g.matchType === 'score') {
-        if (g.score.p1 >= g.goalLimit) { g.phase = 'over'; g.winner = 'p1'; }
-        else if (g.score.p2 >= g.goalLimit) { g.phase = 'over'; g.winner = 'p2'; }
+        if (g.score.p1 >= g.goalLimit) { g.phase = 'over'; g.winner = 'p1'; matchOver = true; }
+        else if (g.score.p2 >= g.goalLimit) { g.phase = 'over'; g.winner = 'p2'; matchOver = true; }
+      }
+      if (matchOver) {
+        resetPositions(g);
+      } else {
+        // Gol sevinç esi: pozisyonu sifirlamadan dondur, top golde kalsin
+        g.goalPause = GOAL_PAUSE_MS;
+        g.ball.vx = 0; g.ball.vy = 0;
+        g.p1.vx = 0; g.p1.vy = 0;
+        g.p2.vx = 0; g.p2.vy = 0;
       }
     }
 
