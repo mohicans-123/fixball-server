@@ -19,6 +19,10 @@ const httpServer = http.createServer((req, res) => {
   if (req.url === '/health' || req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', service: 'fixball-server', uptime: process.uptime(), rooms: rooms.size }));
+  } else if (req.url === '/app-ads.txt') {
+    // AdMob app-ads.txt dogrulamasi (nginx '/' -> node proxy ettigi icin buradan servis edilir)
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('google.com, pub-6373704150966761, DIRECT, f08c47fec0942fa0\n');
   } else {
     res.writeHead(404);
     res.end('Not Found');
