@@ -15,8 +15,32 @@ const GRACE_MS = 20000; // beklenmedik kopmada reconnect icin bekleme suresi (ms
 const FIELD = { w: 820, h: 480, goalSize: 480 * 0.4, goalOnSides: true };
 
 // === HTTP (health) ===
+const LANDING_HTML = `<!DOCTYPE html>
+<html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fixball</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font-family:-apple-system,system-ui,"Segoe UI",Roboto,Arial,sans-serif;
+    background:#15171b;color:#fff;text-align:center;padding:24px}
+  h1{font-size:48px;margin:0 0 10px;letter-spacing:2px}
+  h1 span{color:#27ae60}
+  p{color:#9aa0a6;font-size:18px;margin:3px 0}
+  .foot{position:fixed;bottom:16px;color:#555;font-size:13px}
+</style></head>
+<body>
+  <h1>Fix<span>ball</span></h1>
+  <p>1v1 mobil futbol oyunu</p>
+  <p>1v1 mobile football game</p>
+  <div class="foot">&copy; 2026 Fixball</div>
+</body></html>`;
+
 const httpServer = http.createServer((req, res) => {
-  if (req.url === '/health' || req.url === '/') {
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(LANDING_HTML);
+  } else if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', service: 'fixball-server', uptime: process.uptime(), rooms: rooms.size }));
   } else if (req.url === '/app-ads.txt') {
