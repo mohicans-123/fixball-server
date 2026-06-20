@@ -98,6 +98,8 @@ function buildPlayerList() {
       busy: !!getRoomOfClient(c),
     });
   });
+  // Bot oyuncular: lobide hep musait gorunur (challenge -> aninda bot maci)
+  bots.forEach((b) => { list.push({ id: b.clientId, nick: b.nickname, busy: false }); });
   return list;
 }
 
@@ -154,6 +156,69 @@ function profileOf(ws) {
   };
 }
 
+// ===== Sunucu botlari (online lobide insan gibi gorunen, ws'siz sanal oyuncular) =====
+const BOT_NAMES = ['ali17', 'ismaiiil', 'merveee', 'sahika9'];
+const BOT_COLORS = ['#e74c3c', '#3498db', '#27ae60', '#f1c40f', '#9b59b6', '#e67e22'];
+const BOT_COUNT = 2;
+const BOT_PR = 22, BOT_BR = 12;
+function randOf(a) { return a[Math.floor(Math.random() * a.length)]; }
+// Lobide gosterilen bot "oyuncular" (her zaman musait; challenge edilince ayri bir bot ornegi ile mac acilir)
+const bots = [];
+for (let i = 0; i < BOT_COUNT; i++) {
+  bots.push({ isBot: true, clientId: 'bot' + (i + 1), nickname: '', color: '#3498db', tag: '' });
+}
+function assignBotNames() {
+  const shuffled = [...BOT_NAMES].sort(() => Math.random() - 0.5);
+  bots.forEach((b, i) => { b.nickname = shuffled[i % shuffled.length]; b.color = randOf(BOT_COLORS); });
+}
+assignBotNames();
+function findBot(id) { return bots.find((b) => b.clientId === id) || null; }
+
+// Bot beyni: p2 (guest) = bot. p2 SOL kaleyi (x~0) savunur, SAG kaleye (x=field.w) hucum eder.
+function botInput(g, canKick) {
+  const me = g.p2, ball = g.ball;
+  const goalX = g.field.w, goalY = g.field.h / 2;  // hucum kalesi (sag)
+  const ownX = 0, ownY = g.field.h / 2;            // savunma kalesi (sol)
+  let tx, ty;
+  const ballInOwnHalf = ball.x < g.field.w * 0.42;
+  const ballBehindMe = ball.x < me.x;              // top benden solda (kaleme yakin)
+  if (ballInOwnHalf || ballBehindMe) {
+    // Savunma: top ile kendi kalem arasina konumlan
+    tx = (ball.x + ownX) / 2; ty = (ball.y + ownY) / 2;
+  } else {
+    // Hucum: topun sol-arkasina gec ki saga (kaleye) itebilesin
+    const dgx = ball.x - goalX, dgy = ball.y - goalY;
+    const dl = Math.hypot(dgx, dgy) || 1;
+    tx = ball.x + (dgx / dl) * (BOT_PR + BOT_BR);
+    ty = ball.y + (dgy / dl) * (BOT_PR + BOT_BR);
+  }
+  let dx = tx - me.x, dy = ty - me.y;
+  const d = Math.hypot(dx, dy) || 1;
+  if (d < 3) { dx = 0; dy = 0; } else { dx /= d; dy /= d; }
+  let kick = false;
+  if (canKick) {
+    const bd = Math.hypot(ball.x - me.x, ball.y - me.y);
+    if (bd < BOT_PR + BOT_BR + 10 && ball.x > me.x - 4) kick = true; // yakin + top kaleye dogru
+  }
+  return { dx, dy, kick };
+}
+
+// Insan vs bot maci baslat (lobide bota challenge basinca)
+function beginBotMatch(humanWs, bot) {
+  const code = generateRoomCode();
+  if (!code) return null;
+  const game = newGame();
+  resetPositions(game);
+  game.phase = 'lobby';
+  game.ready.p2 = true;   // bot her zaman hazir
+  game.botCd = 0;
+  const room = { host: humanWs, guest: bot, code, game, tokens: { p1: genToken(), p2: genToken() }, isBotMatch: true };
+  rooms.set(code, room);
+  send(humanWs, { type: 'match_start', role: 'host', code, token: room.tokens.p1, opp: profileOf(bot) });
+  startLoop(room);
+  return code;
+}
+
 // Iki oyuncuyu yeni bir odada eslestir (meydan okuma kabul edilince)
 function beginMatch(hostWs, guestWs) {
   const code = generateRoomCode();
@@ -170,7 +235,8 @@ function beginMatch(hostWs, guestWs) {
 }
 
 function send(ws, obj) {
-  if (ws && ws.readyState === ws.OPEN) {
+  if (!ws || ws.isBot) return;
+  if (ws.readyState === ws.OPEN) {
     try { ws.send(JSON.stringify(obj)); } catch (e) {}
   }
 }
@@ -290,6 +356,19 @@ function tick(room) {
     return;
   }
 
+  // Bot maci: bot her zaman hazir; oynarken girdisini sunucu uretir
+  if (room.guest && room.guest.isBot) {
+    if (g.phase === 'lobby' || g.phase === 'over') g.ready.p2 = true;
+    if (g.phase === 'playing') {
+      if (typeof g.botCd !== 'number') g.botCd = 0;
+      if (g.botCd > 0) g.botCd -= TICK_MS;
+      const bi = botInput(g, g.botCd <= 0);
+      g.inputs.p2.dx = bi.dx;
+      g.inputs.p2.dy = bi.dy;
+      if (bi.kick) { g.inputs.p2.kick = true; g.botCd = 260; }
+    }
+  }
+
   if (g.phase === 'playing') {
     // Butona basis (topa degse de degmese de) -> halka icin, kick tuketilmeden once
     g.pressedP1 = g.inputs.p1.kick;
@@ -397,6 +476,15 @@ function leaveRoom(ws) {
 // Beklenmedik kopma: slotu tut, oyunu dondur, grace sayaci basla
 function handleDisconnect(code, room, slot) {
   if (!slot) return;
+  // Bot maci: insan koparsa reconnect beklemeye gerek yok, hemen kapat
+  if (room.guest && room.guest.isBot) {
+    if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
+    stopLoop(room);
+    rooms.delete(code);
+    console.log(`[oda] ${code} kapandi (bot maci, insan koptu)`);
+    broadcastLobby();
+    return;
+  }
   // Host tek basinaysa (lobi/mac yok) -> reconnect'e gerek yok, direkt kapat
   if (slot === 'p1' && !room.guest) {
     if (room.discTimer) { clearTimeout(room.discTimer); room.discTimer = null; }
@@ -517,6 +605,17 @@ wss.on('connection', (ws, req) => {
       // Bir oyuncuya maca davet (meydan oku)
       case 'challenge': {
         const targetId = String(msg.targetId || '');
+        // Hedef bir bot ise: handshake yok, aninda bot maci (ayri bot ornegiyle)
+        const dispBot = findBot(targetId);
+        if (dispBot) {
+          if (getRoomOfClient(ws)) { send(ws, { type: 'challenge_failed', reason: 'leave_room_first' }); return; }
+          clearChallenge(ws);
+          const botInst = { isBot: true, clientId: dispBot.clientId + '_m', nickname: dispBot.nickname, color: dispBot.color, tag: dispBot.tag };
+          const code = beginBotMatch(ws, botInst);
+          if (!code) { send(ws, { type: 'challenge_failed', reason: 'room_create_failed' }); return; }
+          console.log(`[oda] ${code} bot maci (${botInst.nickname})`);
+          break;
+        }
         if (getRoomOfClient(ws)) { send(ws, { type: 'challenge_failed', reason: 'leave_room_first' }); return; }
         if (ws.challengeTo) { send(ws, { type: 'challenge_failed', reason: 'already_invited' }); return; }
         const target = findClient(targetId);
@@ -692,3 +791,9 @@ wss.on('error', (err) => console.error('Sunucu hatasi:', err.message));
 setInterval(() => {
   if (rooms.size > 0) console.log(`[durum] aktif oda: ${rooms.size}`);
 }, 30000);
+
+// Bot isimleri periyodik degissin (lobide zamanla farkli kisiler gorunur)
+setInterval(() => {
+  assignBotNames();
+  broadcastLobby();
+}, 180000);
