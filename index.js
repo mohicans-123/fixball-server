@@ -47,6 +47,10 @@ const httpServer = http.createServer((req, res) => {
     // AdMob app-ads.txt dogrulamasi (nginx '/' -> node proxy ettigi icin buradan servis edilir)
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('google.com, pub-6373704150966761, DIRECT, f08c47fec0942fa0\n');
+  } else if (req.url === '/google11a7b4b29d8ef13f.html') {
+    // Google Search Console site sahipligi dogrulamasi
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('google-site-verification: google11a7b4b29d8ef13f.html');
   } else {
     res.writeHead(404);
     res.end('Not Found');
